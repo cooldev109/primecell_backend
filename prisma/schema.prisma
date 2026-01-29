@@ -1,0 +1,510 @@
+// Prisma Schema for PrimeCell
+// Milestone 1: Authentication
+// Milestone 2: Onboarding
+// Milestone 3: Deterministic Engine & Plans
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users table
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?  // Optional for backward compatibility with OTP users
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  otpCodes                OtpCode[]
+  refreshTokens           RefreshToken[]
+  onboardingProfile       OnboardingProfile?
+  weeklyCheckins          WeeklyCheckin[]
+  planVersions            PlanVersion[]
+  decisionRecords         DecisionRecord[]
+  activePlan              ActivePlanPointer?
+  journeySummary          UserJourneySummary?
+  aiExplanations          AiExplanation[]
+  deviceTokens            DeviceToken[]
+  notificationLogs        NotificationLog[]
+  scheduledNotifications  ScheduledNotification[]
+  notificationPreferences NotificationPreferences?
+
+  @@map("users")
+}
+
+// OTP codes for authentication
+model OtpCode {
+  id        String   @id @default(cuid())
+  code      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([code, userId])
+  @@map("otp_codes")
+}
+
+// Refresh tokens for JWT authentication
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// Onboarding profile (immutable snapshot, versioned)
+model OnboardingProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version   Int      @default(1)
+
+  // Personal data
+  age       Int?
+  sex       String?  // male, female, other
+  heightCm  Float?
+  weightKg  Float?
+  photoUrl  String?
+
+  // Primary goal
+  primaryGoal     String?  // LOSE_FAT, LOSE_WEIGHT, GAIN_MUSCLE, HEALTH_ENERGY, PERFORMANCE, LONGEVITY
+  goalDetails     Json?    // Goal-specific answers (target waist reduction, weight loss, etc.)
+
+  // Lifestyle
+  workType        String?  // sedentary, mixed, active
+  sleepHours      String?  // less_than_6, 6_7, 7_8, 8_plus
+  stressLevel     String?  // low, moderate, high, very_high
+  trainingTime    String?  // morning, afternoon, evening, none
+
+  // Training
+  trainingFrequency String?  // none, 1_2, 3_4, 5_plus
+  trainingTypes     String[] // weight_training, home_workouts, hiit, cardio, walking
+  trainingIntensity String?  // light, moderate, intense
+
+  // Food preferences
+  mealsPerDay       String?  // 3, 4, 5, varies
+  carbSources       String[] // rice, pasta, potatoes, bread, legumes, fruit
+  excludedFoods     String[] // dairy, gluten, fish, red_meat, sweets
+  digestiveIssues   String?
+
+  // Health & safety
+  diagnosedConditions String[] // hypertension, high_cholesterol, insulin_resistance, hypothyroidism
+  digestionStatus     String?  // normal, constipation, gas_bloating, reflux
+  medications         String?
+  healthNotes         String?
+
+  // Social & adherence
+  mealsOutsideHome    String?  // none, 1_2, 3_4, 5_plus
+  planStructure       String?  // disciplined, balanced, flexible
+  previousDietExperience String? // worked, could_not_maintain, first_time
+
+  // Computed onboarding results
+  quantifiedGoal      String?
+  recommendedPace     String?
+  flexibilityLevel    String?
+  metabolicContext    String?
+  expectations        String?
+
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("onboarding_profiles")
+}
+
+// Weekly check-in (immutable, append-only)
+model WeeklyCheckin {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekNumber Int     // Week number since user started
+
+  // Body metrics
+  weightKg  Float?
+  waistCm   Float?
+  photoUrl  String?
+
+  // Subjective signals (0-10 scale)
+  energyLevel   Int?   // 0-10
+  hungerLevel   Int?   // 0-10
+  sleepQuality  Int?   // 0-10
+  stressLevel   Int?   // 0-10
+
+  // Adherence
+  adherenceLevel String?  // 100, 80_90, 60_70, below_60
+
+  // Contextual events
+  mealsOutside    Boolean @default(false)
+  hadTravel       Boolean @default(false)
+  wasIll          Boolean @default(false)
+  hormonalChanges Boolean @default(false)
+  emotionalStress Boolean @default(false)
+  poorSleep       Boolean @default(false)
+  notes           String?
+
+  // Self-perception
+  selfPerception String?  // progressing, same_confident, frustrated, unsure
+
+  createdAt DateTime @default(now())
+
+  // Relation to decision record created from this check-in
+  decisionRecord DecisionRecord?
+
+  @@index([userId])
+  @@index([userId, weekNumber])
+  @@map("weekly_checkins")
+}
+
+// Plan version (immutable, append-only)
+model PlanVersion {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version   Int      // Incrementing version number per user
+  weekNumber Int     // Week this plan is for
+
+  // Nutrition plan
+  nutritionPlan Json   // { mealStructure, meals[], quantities, flexibilityRules, guidelines }
+
+  // Training plan
+  trainingPlan Json    // { programId, progressionWeek, volumeAdjustment, intensityAdjustment, deloadStatus }
+
+  // Supplement protocol
+  supplementPlan Json? // { supplements[] }
+
+  // Calculated targets
+  dailyCalories   Int?
+  proteinGrams    Int?
+  carbsGrams      Int?
+  fatGrams        Int?
+
+  // Engine metadata
+  engineVersion     String   // e.g., "1.0.0"
+  rulePackVersion   String   // e.g., "1.0.0"
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  decisionRecord DecisionRecord?
+  activePlanPointers ActivePlanPointer[]
+
+  @@unique([userId, version])
+  @@index([userId])
+  @@map("plan_versions")
+}
+
+// Decision record (immutable, append-only audit trail)
+model DecisionRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Source inputs
+  weeklyCheckinId String?       @unique
+  weeklyCheckin   WeeklyCheckin? @relation(fields: [weeklyCheckinId], references: [id])
+  isInitialPlan   Boolean       @default(false)  // True for onboarding-generated plan
+
+  // Input snapshot (for reproducibility)
+  inputSnapshot Json   // Full snapshot of inputs used
+
+  // Derived signals from engine
+  derivedSignals Json  // { trend, confidence, recoveryRisk, plateauDetected, etc. }
+
+  // Rules fired
+  rulesFired Json      // [{ ruleId, ruleName, reasonCode, impact }]
+
+  // Guardrails applied
+  guardrailsApplied Json  // [{ guardrailId, name, action, originalValue, clampedValue }]
+
+  // Output
+  planVersionId String @unique
+  planVersion   PlanVersion @relation(fields: [planVersionId], references: [id])
+
+  // Engine metadata
+  engineVersion   String
+  rulePackVersion String
+
+  // Optional hash for integrity verification
+  inputHash  String?
+  outputHash String?
+
+  createdAt DateTime @default(now())
+
+  // AI explanation relation
+  aiExplanation AiExplanation?
+
+  @@index([userId])
+  @@map("decision_records")
+}
+
+// Active plan pointer (mutable - points to current active plan)
+model ActivePlanPointer {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planVersionId String
+  planVersion   PlanVersion @relation(fields: [planVersionId], references: [id])
+  activatedAt   DateTime @default(now())
+
+  @@map("active_plan_pointers")
+}
+
+// User journey summary (pre-computed, updated after each check-in)
+model UserJourneySummary {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Aggregate stats
+  totalWeeks           Int      @default(0)
+  startingWeight       Float?
+  currentWeight        Float?
+  totalWeightChange    Float    @default(0)
+  totalWaistChange     Float    @default(0)
+  averageAdherence     Float    @default(0)  // 0-100 scale
+
+  // Streak tracking
+  consecutiveGoodWeeks Int      @default(0)  // Weeks with 80%+ adherence
+  longestStreak        Int      @default(0)
+
+  // Plateau tracking
+  plateauWeeksCount    Int      @default(0)
+  currentPlateauWeeks  Int      @default(0)  // Current consecutive plateau weeks
+
+  // Milestones achieved
+  lowestWeight         Float?
+  lowestWeightWeek     Int?
+  lowestWaist          Float?
+  lowestWaistWeek      Int?
+  bestAdherenceWeek    Int?
+  hardestWeek          Int?      // Week with most challenges/lowest adherence
+
+  // Journey timeline
+  firstWeekDate        DateTime?
+  lastCheckinDate      DateTime?
+
+  // Weekly trends (JSON array for AI context)
+  // [{week, weight, waist, adherence, calories, rulesFired, wasDisrupted}]
+  weeklyTrends         Json     @default("[]")
+
+  // Notable events summary (JSON array)
+  // [{week, event: 'plateau_start'|'plateau_break'|'milestone'|'disruption', details}]
+  notableEvents        Json     @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_journey_summaries")
+}
+
+// AI Explanation (cached per decision record)
+model AiExplanation {
+  id               String   @id @default(cuid())
+  decisionRecordId String   @unique
+  decisionRecord   DecisionRecord @relation(fields: [decisionRecordId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Main explanation text
+  explanationText  String   @db.Text
+
+  // Structured sections for UI display
+  progressSummary  String?  @db.Text  // What happened this week + journey context
+  whyThisDecision  String?  @db.Text  // Why the plan changed or didn't
+  whatToDoNext     Json?              // string[] - 3-5 clear actions
+  motivationalNote String?  @db.Text  // Encouraging message
+  safetyNote       String?  @db.Text  // When recovery risk is elevated
+
+  // Safety flags
+  needsMedicalDisclaimer Boolean @default(false)
+  shouldHoldChanges      Boolean @default(false)
+
+  // AI metadata
+  promptVersion    String            // Version of prompt template used
+  modelId          String            // e.g., "gpt-4-turbo", "gpt-3.5-turbo"
+  tokensUsed       Int?
+  generationTimeMs Int?              // How long the API call took
+
+  // Context snapshot (what was sent to AI)
+  contextSnapshot  Json?             // For debugging/auditing
+
+  // Fallback tracking
+  usedFallback     Boolean  @default(false)  // True if AI failed and template was used
+  fallbackReason   String?           // Why fallback was triggered
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([decisionRecordId])
+  @@map("ai_explanations")
+}
+
+// Meal template (seeded content)
+model MealTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  mealType    String   // breakfast, lunch, dinner, snack
+
+  // Nutritional info per serving
+  calories    Int
+  proteinG    Float
+  carbsG      Float
+  fatG        Float
+
+  // Categorization
+  tags        String[] // high_protein, low_carb, vegetarian, quick, etc.
+  excludedFor String[] // dairy, gluten, fish, red_meat - who should NOT get this
+
+  // Recipe/preparation
+  ingredients Json     // [{ name, amount, unit }]
+  instructions String?
+  prepTimeMin Int?
+  cookTimeMin Int?
+
+  // Serving info
+  servingSize   String?  // e.g., "1 plate", "2 cups"
+  servingsCount Int      @default(1)
+
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([mealType])
+  @@map("meal_templates")
+}
+
+// Training program (seeded content)
+model TrainingProgram {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  // Program structure
+  daysPerWeek     Int      // 2, 3, 4, 5, 6
+  programType     String   // strength, hypertrophy, endurance, hybrid
+  difficultyLevel String   // beginner, intermediate, advanced
+  durationWeeks   Int      // Typical program length
+
+  // Target audience
+  suitableFor     String[] // weight_training, home_workouts, etc.
+  equipmentNeeded String[] // barbell, dumbbells, machines, bodyweight
+
+  // Program content
+  weeklySchedule Json     // { days: [{ dayNumber, focus, exercises[] }] }
+  progressionRules Json   // { volumeIncrement, intensityIncrement, deloadFrequency }
+
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("training_programs")
+}
+
+// Push notification device tokens
+model DeviceToken {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String   @unique  // Expo push token
+  platform    String   // ios, android, web
+  deviceName  String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([token])
+  @@map("device_tokens")
+}
+
+// Notification logs
+model NotificationLog {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String   // checkin_reminder, missed_checkin, weekly_summary, motivation
+  title           String
+  body            String
+  data            Json?    // Additional payload data
+  scheduledFor    DateTime?
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+  status          String   @default("pending") // pending, sent, delivered, failed, cancelled
+  errorMessage    String?
+  expoReceiptId   String?  // Expo notification receipt ID
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([scheduledFor])
+  @@map("notification_logs")
+}
+
+// Scheduled notifications (recurring reminders)
+model ScheduledNotification {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String   // daily_reminder, checkin_due, motivation
+  cronExpression  String?  // For recurring notifications
+  nextRunAt       DateTime
+  lastRunAt       DateTime?
+  isActive        Boolean  @default(true)
+  payload         Json?    // Notification content template
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isActive, nextRunAt])
+  @@map("scheduled_notifications")
+}
+
+// User notification preferences
+model NotificationPreferences {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Global settings
+  pushEnabled           Boolean  @default(true)
+  emailEnabled          Boolean  @default(true)
+  quietHoursStart       String?  // HH:MM format, e.g., "22:00"
+  quietHoursEnd         String?  // HH:MM format, e.g., "07:00"
+  timezone              String   @default("UTC")
+
+  // Notification types
+  checkinReminders      Boolean  @default(true)
+  missedCheckinAlerts   Boolean  @default(true)
+  weeklyDigest          Boolean  @default(true)
+  motivationalMessages  Boolean  @default(true)
+  planUpdates           Boolean  @default(true)
+
+  // Reminder timing
+  checkinReminderDay    String   @default("sunday")  // Day of week for check-in reminder
+  checkinReminderTime   String   @default("09:00")   // Time for check-in reminder
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("notification_preferences")
+}
