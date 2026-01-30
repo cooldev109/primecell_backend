@@ -173,7 +173,11 @@ export class AuthService {
           revoked: false,
           expiresAt: { gt: new Date() },
         },
-        include: { user: true },
+        include: {
+          user: {
+            include: { onboardingProfile: true }
+          }
+        },
       });
 
       if (!storedToken) {
@@ -195,7 +199,7 @@ export class AuthService {
           id: storedToken.user.id,
           email: storedToken.user.email,
           createdAt: storedToken.user.createdAt,
-          hasCompletedOnboarding: storedToken.user.hasCompletedOnboarding,
+          hasCompletedOnboarding: !!storedToken.user.onboardingProfile,
         },
       };
     } catch {
