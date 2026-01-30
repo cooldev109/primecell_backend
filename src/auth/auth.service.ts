@@ -195,6 +195,7 @@ export class AuthService {
           id: storedToken.user.id,
           email: storedToken.user.email,
           createdAt: storedToken.user.createdAt,
+          hasCompletedOnboarding: storedToken.user.hasCompletedOnboarding,
         },
       };
     } catch {
