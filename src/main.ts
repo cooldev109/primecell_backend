@@ -11,29 +11,14 @@ async function bootstrap() {
     logger: ['log', 'error', 'warn', 'debug', 'verbose'],
   });
 
-  // Simple request logging middleware with body logging for errors
+  // Log ALL requests for debugging
   app.use((req: any, res: any, next: any) => {
     const start = Date.now();
-
-    // Capture the original json method to log response body
-    const originalJson = res.json.bind(res);
-    res.json = (body: any) => {
-      res._body = body;
-      return originalJson(body);
-    };
+    console.log(`[HTTP] --> ${req.method} ${req.url}`);
 
     res.on('finish', () => {
       const duration = Date.now() - start;
-      if (res.statusCode >= 400) {
-        console.log(`[HTTP] ${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
-        if (res._body) {
-          console.log(`[HTTP] Response body:`, JSON.stringify(res._body));
-        }
-        if (req.body && Object.keys(req.body).length > 0) {
-          // Log request body keys (not values for security)
-          console.log(`[HTTP] Request body keys:`, Object.keys(req.body));
-        }
-      }
+      console.log(`[HTTP] <-- ${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
     });
     next();
   });
